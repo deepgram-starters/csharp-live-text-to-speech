@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.11.35303.130
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TTSLiveStarter", "TTSLiveStarter.csproj", "{9556B24E-4354-493F-9110-3E7551D08004}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{9556B24E-4354-493F-9110-3E7551D08004}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9556B24E-4354-493F-9110-3E7551D08004}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9556B24E-4354-493F-9110-3E7551D08004}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9556B24E-4354-493F-9110-3E7551D08004}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {462F37F9-6603-4F91-993A-FEDDD50BE1C3}
+	EndGlobalSection
+EndGlobal
