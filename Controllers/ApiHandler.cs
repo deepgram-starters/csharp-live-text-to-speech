@@ -130,7 +130,7 @@ public class ApiHandler
                 {
                     Model = _model,
                     Encoding = "linear16",
-                    SampleRate = "48000",
+                    SampleRate = 48000,
                 };
 
                 await _speakClient.Connect(speakSchema);
