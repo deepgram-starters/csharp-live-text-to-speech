@@ -1,6 +1,6 @@
 [meta]
-  title = "Live TTS .NET Starter"
-  description = "Basic demo for using Deepgram TTS Live/WebSockets with .NET"
+  title = "C# Live Text-to-Speech Starter"
+  description = "Get started using Deepgram's Live Text-to-Speech with this C# demo app"
   author = "Deepgram DX Team <devrel@deepgram.com> (https://developers.deepgram.com)"
   useCase = "TTS WebSockets"
   language = "C#"
