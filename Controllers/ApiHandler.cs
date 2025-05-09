@@ -35,7 +35,7 @@ public class ApiHandler
         {
             if (string.IsNullOrEmpty(model))
             {
-                model = "aura-asteria-en";
+                model = "aura-2-thalia-en";
             }
 
             _model = model;
@@ -122,7 +122,7 @@ public class ApiHandler
 
                 if (_model == null)
                 {
-                    _model = "aura-asteria-en";
+                    _model = "aura-2-thalia-en";
                 }
 
                 // Start the connection
