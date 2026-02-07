@@ -2,9 +2,10 @@
   title = "C# Live Text-to-Speech Starter"
   description = "Get started using Deepgram's Live Text-to-Speech with this C# demo app"
   author = "Deepgram DX Team <devrel@deepgram.com> (https://developers.deepgram.com)"
-  useCase = "Live TTS"
-  language = "C#"
-  framework = ".NET"
+  useCase = "live-text-to-speech"
+  language = "csharp"
+  framework = "dotnet"
+  tags = ["live-text-to-speech", "live-tts", "streaming-tts", "real-time-tts", "streaming-text-to-speech", "csharp", "dotnet"]
 
 [build]
   command = "dotnet restore"
