@@ -7,13 +7,17 @@
  * Key Features:
  * - WebSocket proxy: /api/live-text-to-speech -> wss://api.deepgram.com/v1/speak
  * - Bidirectional message forwarding (JSON text + binary audio)
+ * - JWT session auth with page nonce (production only)
  * - Metadata endpoint: GET /api/metadata
  * - CORS enabled for frontend communication
  * - Graceful shutdown with connection tracking
  */
 
 using System.Collections.Concurrent;
+using System.IdentityModel.Tokens.Jwt;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
+using Microsoft.IdentityModel.Tokens;
 using Tomlyn;
 using Tomlyn.Model;
 using HttpResults = Microsoft.AspNetCore.Http.Results;
@@ -33,6 +37,96 @@ var host = Environment.GetEnvironmentVariable("HOST") ?? "0.0.0.0";
 var frontendPort = int.TryParse(Environment.GetEnvironmentVariable("FRONTEND_PORT"), out var fp) ? fp : 8080;
 
 const string DeepgramTtsUrl = "wss://api.deepgram.com/v1/speak";
+
+// ============================================================================
+// SESSION AUTH - JWT tokens with page nonce for production security
+// ============================================================================
+
+var sessionSecretEnv = Environment.GetEnvironmentVariable("SESSION_SECRET");
+var sessionSecret = sessionSecretEnv ?? Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+var requireNonce = !string.IsNullOrEmpty(sessionSecretEnv);
+var sessionSecretKey = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(sessionSecret));
+
+var sessionNonces = new ConcurrentDictionary<string, long>();
+const int NonceTtlSeconds = 5 * 60; // 5 minutes
+const int JwtExpirySeconds = 3600; // 1 hour
+
+string GenerateNonce()
+{
+    var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+    sessionNonces[nonce] = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + NonceTtlSeconds;
+    return nonce;
+}
+
+bool ConsumeNonce(string nonce)
+{
+    if (!sessionNonces.TryRemove(nonce, out var expiry))
+        return false;
+    return DateTimeOffset.UtcNow.ToUnixTimeSeconds() < expiry;
+}
+
+// Cleanup expired nonces every 60 seconds
+var nonceCleanupTimer = new Timer(_ =>
+{
+    var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    foreach (var kvp in sessionNonces)
+    {
+        if (now >= kvp.Value)
+            sessionNonces.TryRemove(kvp.Key, out _);
+    }
+}, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+
+// Read frontend/dist/index.html template for nonce injection
+string? indexHtmlTemplate = null;
+try
+{
+    indexHtmlTemplate = File.ReadAllText(Path.Combine(Directory.GetCurrentDirectory(), "frontend", "dist", "index.html"));
+}
+catch (FileNotFoundException) { }
+
+string CreateSessionToken()
+{
+    var handler = new JwtSecurityTokenHandler();
+    var descriptor = new SecurityTokenDescriptor
+    {
+        Expires = DateTime.UtcNow.AddSeconds(JwtExpirySeconds),
+        SigningCredentials = new SigningCredentials(sessionSecretKey, SecurityAlgorithms.HmacSha256Signature),
+    };
+    var token = handler.CreateToken(descriptor);
+    return handler.WriteToken(token);
+}
+
+bool ValidateSessionToken(string token)
+{
+    try
+    {
+        var handler = new JwtSecurityTokenHandler();
+        handler.ValidateToken(token, new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = sessionSecretKey,
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ClockSkew = TimeSpan.Zero,
+        }, out _);
+        return true;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
+/// Validates JWT from WebSocket subprotocol: access_token.<jwt>
+string? ValidateWsToken(string? protocolHeader)
+{
+    if (string.IsNullOrEmpty(protocolHeader)) return null;
+    var protocols = protocolHeader.Split(',', StringSplitOptions.TrimEntries);
+    var tokenProto = protocols.FirstOrDefault(p => p.StartsWith("access_token."));
+    if (tokenProto == null) return null;
+    var token = tokenProto["access_token.".Length..];
+    return ValidateSessionToken(token) ? tokenProto : null;
+}
 
 // ============================================================================
 // API KEY LOADING
@@ -85,6 +179,53 @@ app.UseWebSockets();
 
 // Track active connections for graceful shutdown
 var activeConnections = new ConcurrentDictionary<string, WebSocket>();
+
+// ============================================================================
+// SESSION ROUTES - Auth endpoints (unprotected)
+// ============================================================================
+
+/// GET / — Serve index.html with injected session nonce (production only)
+app.MapGet("/", () =>
+{
+    if (indexHtmlTemplate == null)
+        return HttpResults.Text("Frontend not built. Run make build first.", statusCode: 404);
+
+    // Cleanup expired nonces
+    var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    foreach (var kvp in sessionNonces)
+    {
+        if (now >= kvp.Value)
+            sessionNonces.TryRemove(kvp.Key, out _);
+    }
+
+    var nonce = GenerateNonce();
+    var html = indexHtmlTemplate.Replace("</head>", $"<meta name=\"session-nonce\" content=\"{nonce}\">\n</head>");
+    return HttpResults.Content(html, "text/html");
+});
+
+/// GET /api/session — Issues a JWT. In production, requires valid nonce.
+app.MapGet("/api/session", (HttpRequest request) =>
+{
+    if (requireNonce)
+    {
+        var nonce = request.Headers["X-Session-Nonce"].FirstOrDefault();
+        if (string.IsNullOrEmpty(nonce) || !ConsumeNonce(nonce))
+        {
+            return HttpResults.Json(new Dictionary<string, object>
+            {
+                ["error"] = new Dictionary<string, string>
+                {
+                    ["type"] = "AuthenticationError",
+                    ["code"] = "INVALID_NONCE",
+                    ["message"] = "Valid session nonce required. Please refresh the page.",
+                }
+            }, statusCode: 403);
+        }
+    }
+
+    var token = CreateSessionToken();
+    return HttpResults.Json(new Dictionary<string, string> { ["token"] = token });
+});
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -250,7 +391,17 @@ app.Use(async (context, next) =>
 {
     if (context.Request.Path == "/api/live-text-to-speech" && context.WebSockets.IsWebSocketRequest)
     {
-        var clientWs = await context.WebSockets.AcceptWebSocketAsync();
+        // Validate JWT from WebSocket subprotocol
+        var protocolHeader = context.Request.Headers["Sec-WebSocket-Protocol"].FirstOrDefault();
+        var validProto = ValidateWsToken(protocolHeader);
+        if (validProto == null)
+        {
+            context.Response.StatusCode = 401;
+            await context.Response.WriteAsync("Unauthorized");
+            return;
+        }
+
+        var clientWs = await context.WebSockets.AcceptWebSocketAsync(validProto);
         await HandleTtsStream(clientWs, context.Request.QueryString.Value, apiKey, context.RequestAborted);
     }
     else
@@ -334,11 +485,14 @@ lifetime.ApplicationStopping.Register(() =>
 // SERVER START
 // ============================================================================
 
+var nonceStatus = requireNonce ? " (nonce required)" : "";
 Console.WriteLine();
 Console.WriteLine(new string('=', 70));
 Console.WriteLine($"🚀 Backend API Server running at http://localhost:{port}");
 Console.WriteLine($"📡 CORS enabled for http://localhost:{frontendPort}");
-Console.WriteLine($"📡 WebSocket endpoint: ws://localhost:{port}/api/live-text-to-speech");
+Console.WriteLine($"📡 GET  /api/session{nonceStatus}");
+Console.WriteLine($"📡 WebSocket endpoint: ws://localhost:{port}/api/live-text-to-speech (auth required)");
+Console.WriteLine($"📡 GET  /api/metadata");
 Console.WriteLine($"\n💡 Frontend should be running on http://localhost:{frontendPort}");
 Console.WriteLine(new string('=', 70));
 Console.WriteLine();
