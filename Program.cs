@@ -342,6 +342,9 @@ app.Use(async (context, next) =>
 // API ROUTES
 // ============================================================================
 
+// Health check endpoint
+app.MapGet("/health", () => HttpResults.Json(new { status = "ok", service = "live-text-to-speech" }));
+
 /// GET /api/metadata
 ///
 /// Returns metadata about this starter application from deepgram.toml
@@ -419,6 +422,7 @@ Console.WriteLine($"🚀 Backend API Server running at http://localhost:{port}")
 Console.WriteLine($"📡 CORS enabled for http://localhost:{frontendPort}");
 Console.WriteLine($"📡 GET  /api/session");
 Console.WriteLine($"📡 WebSocket endpoint: ws://localhost:{port}/api/live-text-to-speech (auth required)");
+Console.WriteLine($"📡 GET  /health");
 Console.WriteLine($"📡 GET  /api/metadata");
 Console.WriteLine($"\n💡 Frontend should be running on http://localhost:{frontendPort}");
 Console.WriteLine(new string('=', 70));
